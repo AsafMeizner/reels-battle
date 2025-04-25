@@ -3,42 +3,55 @@
 import { useEffect, useRef, useState } from 'react'
 import Pusher from 'pusher-js'
 
-type EventsMap = Record<string, any>
+export interface EventsMap {
+  [eventName: string]: unknown
+}
 
-/**
- * Subscribes to `channelName` and listens for `eventNames`.
- * Exposes incoming `events` and your own `socketId`.
- */
-export function usePusher(channelName: string, eventNames: string[]) {
+export interface UsePusherResult {
+  events: EventsMap
+  socketId: string
+}
+
+export function usePusher(
+  channelName: string,
+  eventNames: string[]
+): UsePusherResult {
+  // Initialize ref to null
   const pusher = useRef<Pusher | null>(null)
-  const [events, setEvents]     = useState<EventsMap>({})
+  const [events, setEvents] = useState<EventsMap>({})
   const [socketId, setSocketId] = useState<string>('')
 
   useEffect(() => {
-    Pusher.logToConsole = false
-    pusher.current = new Pusher(
+    // Instantiate Pusher client
+    const client = new Pusher(
       process.env.NEXT_PUBLIC_PUSHER_KEY!,
       { cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER! }
     )
+    pusher.current = client
 
-    // Grab real socket_id once connected
-    pusher.current.connection.bind('connected', () => {
-      setSocketId(pusher.current!.connection.socket_id!)
-    })
+    // Once connected, capture socket_id
+    const onConnected = () => {
+      if (client.connection.socket_id) {
+        setSocketId(client.connection.socket_id)
+      }
+    }
+    client.connection.bind('connected', onConnected)
 
-    // Subscribe only once we have a channelName
+    // Subscribe to the channel and bind events
     if (channelName) {
-      const channel = pusher.current.subscribe(channelName)
+      const channel = client.subscribe(channelName)
       for (const name of eventNames) {
-        channel.bind(name, (payload: any) => {
-          setEvents(e => ({ ...e, [name]: payload }))
+        channel.bind(name, (payload: unknown): void => {
+          setEvents(prev => ({ ...prev, [name]: payload }))
         })
       }
     }
 
     return () => {
-      if (channelName) pusher.current?.unsubscribe(channelName)
-      pusher.current?.connection.unbind('connected')
+      if (channelName) {
+        pusher.current?.unsubscribe(channelName)
+      }
+      client.connection.unbind('connected', onConnected)
     }
   }, [channelName, eventNames])
 
